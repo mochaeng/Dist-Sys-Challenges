@@ -1,0 +1,4 @@
+go 1.21.3
+
+use ./01-echo
+use ./02-unique-id-generation
