@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -44,31 +45,47 @@ func main() {
 		Neighboors: []string{},
 	}
 
+	var once sync.Once
+
 	node.Handle("broadcast", func(msg maelstrom.Message) error {
 		broadcastMSG := BroadcastRequest{}
 		json.Unmarshal(msg.Body, &broadcastMSG)
 
 		worker.ValMutex.Lock()
-
 		_, ok := worker.SeenValues[broadcastMSG.Value]
 		if !ok {
 			worker.AddValue(broadcastMSG.Value)
 		}
-
 		_, ok = worker.Know[msg.Src]
 		if !ok {
 			worker.Know[msg.Src] = make(map[int]bool)
 		}
 		worker.Know[msg.Src][broadcastMSG.Value] = true
-
-		msgToGoosip := BroadcastRequest{TP: "broadcast", Value: broadcastMSG.Value}
-		for _, neighboorID := range worker.Neighboors {
-			if !worker.Know[neighboorID][broadcastMSG.Value] {
-				node.Send(neighboorID, msgToGoosip)
-			}
-		}
-
 		worker.ValMutex.Unlock()
+
+		once.Do(func() {
+			go func() {
+				ticker := time.Tick(300 * time.Millisecond)
+				for range ticker {
+					worker.ValMutex.Lock()
+
+					for _, value := range worker.values {
+						msgToGoosip := BroadcastRequest{
+							TP:    "broadcast",
+							Value: value,
+						}
+						for _, neighboorID := range worker.Neighboors {
+							if !worker.Know[neighboorID][value] {
+								node.Send(neighboorID, msgToGoosip)
+							}
+						}
+					}
+
+					worker.ValMutex.Unlock()
+				}
+
+			}()
+		})
 
 		response := map[string]any{
 			"type": "broadcast_ok",
