@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -28,66 +29,78 @@ const (
 	EPOCH = 1288834974657
 )
 
+type Worker struct {
+	lastTimeStamp int64
+	sequence      int64
+
+	datacenter_id int64
+	nodeID        int64
+	counter       int64
+
+	mutx sync.Mutex
+}
+
+func (w *Worker) nextID() (int64, error) {
+	w.mutx.Lock()
+	defer w.mutx.Unlock()
+
+	currentTimeStamp := time.Now().UnixMilli()
+	if currentTimeStamp == w.lastTimeStamp {
+		w.sequence = (w.sequence + 1) & SEQUENCE_MASK
+
+		if w.sequence == 0 {
+			for currentTimeStamp <= w.lastTimeStamp {
+				currentTimeStamp = time.Now().UnixMilli()
+			}
+		} else {
+			w.sequence = 0
+		}
+	}
+
+	if currentTimeStamp < w.lastTimeStamp {
+		return -1, errors.New("clock is running backwards")
+	}
+
+	w.lastTimeStamp = currentTimeStamp
+
+	flake_id := ((currentTimeStamp - EPOCH) << TIMESTAMPT_LEFT_SHIFT) |
+		(w.datacenter_id << DATACENTER_ID_SHIFT) |
+		(w.nodeID << WORKER_ID_SHIFT) |
+		w.sequence + w.counter
+
+	w.counter += 1
+
+	return flake_id, nil
+}
+
 func main() {
-	n := maelstrom.NewNode()
+	node := maelstrom.NewNode()
 
-	var lastTimeStamp int64 = -1
-	var sequence int64 = 0
-	// var datacenter_id int64 = int64(rand.Intn(MAX_DATACENTER_ID))
-	var datacenter_id int64 = 3
-	var nodeID int64 = 0
+	worker := Worker{
+		lastTimeStamp: -1,
+		datacenter_id: int64(rand.Intn(MAX_DATACENTER_ID)),
+	}
 
-	var mutx sync.Mutex
 	var once sync.Once
 
-	var counter int64 = 0
-
-	n.Handle("generate", func(msg maelstrom.Message) error {
-		mutx.Lock()
-		defer mutx.Unlock()
-
+	node.Handle("generate", func(msg maelstrom.Message) error {
 		once.Do(func() {
 			var strValue string = string(msg.Dest[1])
 			value, _ := strconv.Atoi(strValue)
-			nodeID += int64(value)
+			worker.nodeID += int64(value)
 		})
 
-		currentTimeStamp := time.Now().UnixMilli()
-
-		if currentTimeStamp == lastTimeStamp {
-			sequence = (sequence + 1) & SEQUENCE_MASK
-
-			if sequence == 0 {
-				for currentTimeStamp <= lastTimeStamp {
-					currentTimeStamp = time.Now().UnixMilli()
-				}
-			} else {
-				sequence = 0
-			}
-		}
-
-		if currentTimeStamp < lastTimeStamp {
-			return errors.New("clock is running backwards")
-		}
-
-		lastTimeStamp = currentTimeStamp
-
-		flake_id := ((currentTimeStamp - EPOCH) << TIMESTAMPT_LEFT_SHIFT) |
-			(datacenter_id << DATACENTER_ID_SHIFT) |
-			(nodeID << WORKER_ID_SHIFT) |
-			sequence + counter
-
-		counter += 1
+		id, _ := worker.nextID()
 
 		var body = map[string]any{
 			"type": "generate_ok",
-			"id":   fmt.Sprintf("%v-%v", nodeID, flake_id),
+			"id":   fmt.Sprintf("%v-%v", worker.nodeID, id),
 		}
 
-		return n.Reply(msg, body)
+		return node.Reply(msg, body)
 	})
 
-	if err := n.Run(); err != nil {
+	if err := node.Run(); err != nil {
 		log.Fatal("Error: ", err)
 	}
 }
