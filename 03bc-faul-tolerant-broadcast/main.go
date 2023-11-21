@@ -65,7 +65,7 @@ func main() {
 
 		once.Do(func() {
 			go func() {
-				ticker := time.Tick(300 * time.Millisecond)
+				ticker := time.Tick(500 * time.Millisecond)
 				for range ticker {
 					worker.ValMutex.Lock()
 

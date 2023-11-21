@@ -1,6 +1,9 @@
-go 1.21.3
+go 1.21.4
 
-use ./01-echo
-use ./02-unique-id-generation
-use ./03a-broadcast
-use ./03b-multi-node-broadcast
+use (
+	./01-echo
+	./02-unique-id-generation
+	./03a-broadcast
+	./03bc-faul-tolerant-broadcast
+	./03d-efficient-broadcast
+)
